@@ -1,11 +1,11 @@
 from threading import Lock
 
-from polog.errors import DoubleSettingError, AfterStartSettingError
-from polog.core.utils.exception_escaping import exception_escaping
-from polog.core.utils.signature_matcher import SignatureMatcher
+from statema.errors import DoubleSettingError, AfterStartSettingError
+from statema.utils.exception_escaping import exception_escaping
+from statema.utils.signature_matcher import SignatureMatcher
 
 
-class SettingPoint:
+class Point:
     """
     В глобальном классе настроек имени каждой отдельной настройки соответствует экземпляр данного класса.
     Вся логика, связанная с проверкой возможности сохранить новое значение для конкретной настройки, находится здесь. Таким образом, в основном классе остается только функциональность агрегации.
@@ -39,6 +39,7 @@ class SettingPoint:
         self.changed = False
         self.shared_lock_with = shared_lock_with
         self.lock = Lock()
+
         self.set_action(action)
         self.set_conflicts(conflicts)
         self.set_read_lock(read_lock)
@@ -47,7 +48,15 @@ class SettingPoint:
     def __str__(self):
         return f'<SettingPoint object "{self.name}" with value {self.value}, #{id(self)}>'
 
-    def set(self, value):
+    def __get__(self, store, store_class):
+        """
+        Абстрактный метод получения текущего значения пункта настроек.
+
+        При инициализации объекта он будет перезаписан одной из реальных имплементаций, в зависимости от входных аргументов.
+        """
+        return self.__get__(store, store_class)
+
+    def __set__(self, store, value):
         """
         Здесь мы сохраняем новое значение настройки.
 
@@ -77,6 +86,17 @@ class SettingPoint:
             self.do_action(old_value, value)
             self.changed = True
 
+    def set_read_lock(self, read_lock):
+        """
+        Подменяем стандартный незащищенный блокировкой метод get() защищенным.
+
+        Подмена производится, если при инициализации объекта был передан аргумент read_lock == True.
+        """
+        if read_lock:
+            self.__get__ = self.locked_get
+        else:
+            self.__get__ = self.unlocked_get
+
     def set_default_value(self, default):
         """
         Присвоение обязательного дефолтного значения.
@@ -91,15 +111,9 @@ class SettingPoint:
                 raise ValueError('Checking the default parameter is mandatory, but the function for checking is not defined.')
         self.value = default
 
-    def get(self):
-        """
-        Абстрактный метод получения текущего значения пункта настроек.
 
-        При инициализации объекта он будет перезаписан одной из реальных имплементаций, в зависимости от входных аргументов.
-        """
-        raise NotImplementedError # pragma: no cover
 
-    def unlocked_get(self):
+    def unlocked_get(self, store, store_class):
         """
         Получение хранящегося значения.
 
@@ -107,7 +121,7 @@ class SettingPoint:
         """
         return self.value
 
-    def locked_get(self):
+    def locked_get(self, store, store_class):
         """
         Защищенное чтение.
 
@@ -160,17 +174,6 @@ class SettingPoint:
         Метод используется при обмене блокировками у взаимосвязанных полей.
         """
         self.lock = lock
-
-    def set_read_lock(self, read_lock):
-        """
-        Подменяем стандартный незащищенный блокировкой метод get() защищенным.
-
-        Подмена производится, если при инициализации объекта был передан аргумент read_lock == True.
-        """
-        if read_lock:
-            self.get = self.locked_get
-        else:
-            self.get = self.unlocked_get
 
     def set_conflicts(self, conflicts):
         """
